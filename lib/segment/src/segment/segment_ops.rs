@@ -657,6 +657,29 @@ impl Segment {
         self.id_tracker.borrow_mut().fix_inconsistencies()
     }
 
+    /// Returns the (estimated) amount of deferred points.
+    ///
+    /// This value is an estimation because it does not account for deferred points
+    /// that have been deleted before becoming visible.
+    pub fn deferred_point_count_estimated(&self) -> usize {
+        match self.deferred_internal_id {
+            Some(internal_id) => {
+                let id_tracker = self.id_tracker.borrow();
+                let max_id = id_tracker.total_point_count();
+                max_id.saturating_sub(internal_id as usize)
+            }
+            None => 0,
+        }
+    }
+
+    /// Returns the amount of points that are not deferred.
+    pub fn non_deferred_point_count_estimated(&self) -> usize {
+        self.id_tracker
+            .borrow()
+            .available_point_count()
+            .saturating_sub(self.deferred_point_count_estimated())
+    }
+
     pub fn has_deferred_points(&self) -> bool {
         // Point is deferred if his internal ID >= deferred_internal_id
         self.deferred_internal_id.is_some()
@@ -669,6 +692,18 @@ impl Segment {
             return internal_id >= deferred_from;
         };
         false
+    }
+
+    /// Returns `true` if the given point is a deferred point (and therefore must be excluded from read operations).
+    pub fn is_point_deferred_internal(&self, internal_id: PointOffsetType) -> bool {
+        Self::is_internal_id_deferred(internal_id, self.deferred_internal_id)
+    }
+
+    pub fn is_internal_id_deferred(
+        point_id: PointOffsetType,
+        deferred_internal_id: Option<PointOffsetType>,
+    ) -> bool {
+        deferred_internal_id.is_some_and(|deferred_internal_id| point_id >= deferred_internal_id)
     }
 
     pub(crate) fn update_deferred_internal_id(&mut self) {
