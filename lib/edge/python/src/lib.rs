@@ -111,8 +111,11 @@ impl PyEdgeShard {
         Ok(())
     }
 
-    pub fn optimize(&mut self) -> Result<bool> {
-        let optimized = self.get_shard_mut()?.optimize_all_segments_blocking()?;
+    #[pyo3(signature = (hnsw_config = None))]
+    pub fn optimize(&mut self, hnsw_config: Option<PyHnswIndexConfig>) -> Result<bool> {
+        let optimized = self
+            .get_shard_mut()?
+            .optimize_all_segments_blocking(hnsw_config.map(Into::into))?;
         Ok(optimized)
     }
 

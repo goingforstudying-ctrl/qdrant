@@ -30,8 +30,11 @@ impl EdgeShard {
     /// Takes `&mut self` because concurrent calls would race on the shared
     /// temp directory ([`TEMP_SEGMENTS_PATH`]) — cleanup at the end could
     /// remove files still in use by another invocation.
-    pub fn optimize_all_segments_blocking(&mut self) -> OperationResult<bool> {
-        let optimizers = self.build_blocking_optimizers()?;
+    pub fn optimize_all_segments_blocking(
+        &mut self,
+        hnsw_config: Option<HnswConfig>,
+    ) -> OperationResult<bool> {
+        let optimizers = self.build_blocking_optimizers(hnsw_config)?;
         let stopped = AtomicBool::new(false);
         let mut optimized_any = false;
 
@@ -93,12 +96,15 @@ impl EdgeShard {
         result
     }
 
-    fn build_blocking_optimizers(&self) -> OperationResult<Vec<Arc<Optimizer>>> {
+    fn build_blocking_optimizers(
+        &self,
+        hnsw_config: Option<HnswConfig>,
+    ) -> OperationResult<Vec<Arc<Optimizer>>> {
         let segments_path = self.path.join(SEGMENTS_PATH);
         let temp_segments_path = self.path.join(TEMP_SEGMENTS_PATH);
         Self::reset_temp_segments_dir(&temp_segments_path)?;
 
-        let hnsw_config = HnswConfig::default();
+        let hnsw_config = hnsw_config.unwrap_or_default();
         let hnsw_global_config = HnswGlobalConfig::default();
         let segment_optimizer_config =
             OptimizerSourceConfig::from_segment_config(&self.config, hnsw_config).build();
@@ -217,7 +223,7 @@ mod tests {
         let mut reopened = EdgeShard::load(dir.path(), None).unwrap();
         assert_eq!(reopened.info().segments_count, 2);
 
-        let optimized = reopened.optimize_all_segments_blocking().unwrap();
+        let optimized = reopened.optimize_all_segments_blocking(None).unwrap();
         assert!(!optimized, "optimizer should not force-merge all segments");
         assert_eq!(reopened.info().segments_count, 2);
 
@@ -244,10 +250,10 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(optimized, "vacuum candidate should be optimized");
 
-        let optimized_again = shard.optimize_all_segments_blocking().unwrap();
+        let optimized_again = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(
             !optimized_again,
             "second run should be idle after blocking optimization"
@@ -273,7 +279,7 @@ mod tests {
             .update(PointOperation(UpsertPoints(PointsList(points))))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(!optimized, "single clean segment should not be optimized");
         assert_eq!(shard.info().points_count, 100);
         assert_eq!(shard.info().segments_count, 1);
@@ -291,7 +297,7 @@ mod tests {
 
         let mut shard = EdgeShard::load(dir.path(), Some(test_config())).unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(!optimized, "empty shard should not trigger optimization");
         assert_eq!(shard.info().points_count, 0);
     }
@@ -316,7 +322,7 @@ mod tests {
         multiply_segments(dir.path(), target_count);
 
         let mut reopened = EdgeShard::load(dir.path(), None).unwrap();
-        reopened.optimize_all_segments_blocking().unwrap();
+        reopened.optimize_all_segments_blocking(None).unwrap();
         let info = reopened.info();
         assert!(
             info.segments_count <= default_segment_number() + 1,
@@ -362,11 +368,11 @@ mod tests {
 
         let mut reopened = EdgeShard::load(dir.path(), None).unwrap();
         // First explicit optimization triggers merge.
-        reopened.optimize_all_segments_blocking().unwrap();
+        reopened.optimize_all_segments_blocking(None).unwrap();
         let segments_after_first = reopened.info().segments_count;
 
         // Second explicit optimization should be a no-op.
-        let optimized = reopened.optimize_all_segments_blocking().unwrap();
+        let optimized = reopened.optimize_all_segments_blocking(None).unwrap();
         assert!(
             !optimized,
             "second optimization run should be idle after merge"
@@ -398,7 +404,7 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(
             !optimized,
             "5% deletion should not trigger vacuum (threshold is 20%)"
@@ -431,7 +437,7 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(
             !optimized,
             "high deletion ratio with only 100 total points should not trigger vacuum \
@@ -465,7 +471,7 @@ mod tests {
             }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(optimized, "25% deletion should trigger vacuum");
 
         // Verify point count
@@ -521,7 +527,7 @@ mod tests {
 
         // The vacuum optimizer rebuilds the segment, but since 0 points remain
         // in the result, `points_optimized == 0` and the function returns false.
-        let _optimized = shard.optimize_all_segments_blocking().unwrap();
+        let _optimized = shard.optimize_all_segments_blocking(None).unwrap();
 
         let count = shard
             .count(CountRequestInternal {
@@ -569,7 +575,7 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(
             !optimized,
             "exactly 20% deletion (not strictly greater) should not trigger vacuum"
@@ -599,7 +605,7 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(
             optimized,
             "20.1% deletion should trigger vacuum (threshold is >20%)"
@@ -638,7 +644,7 @@ mod tests {
 
         // Explicit optimization (both merge and vacuum should run)
         let mut reopened = EdgeShard::load(dir.path(), None).unwrap();
-        reopened.optimize_all_segments_blocking().unwrap();
+        reopened.optimize_all_segments_blocking(None).unwrap();
 
         let info = reopened.info();
         assert!(
@@ -666,7 +672,7 @@ mod tests {
         assert_points_retrievable_with_vectors(&reopened, &[251, 500, 1000]);
 
         // Second run should be idle
-        let optimized = reopened.optimize_all_segments_blocking().unwrap();
+        let optimized = reopened.optimize_all_segments_blocking(None).unwrap();
         assert!(!optimized, "second run should be idle after merge+vacuum");
     }
 
@@ -692,7 +698,7 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(optimized);
 
         let temp_path = dir.path().join(TEMP_SEGMENTS_PATH);
@@ -741,7 +747,7 @@ mod tests {
             .update(PointOperation(DeletePoints { ids: deleted_ids }))
             .unwrap();
 
-        let optimized = shard.optimize_all_segments_blocking().unwrap();
+        let optimized = shard.optimize_all_segments_blocking(None).unwrap();
         assert!(optimized);
         drop(shard);
 
